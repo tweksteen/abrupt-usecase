@@ -1,0 +1,82 @@
+--- Python-3.2.3/Modules/_ssl.c	2012-04-11 16:54:07.000000000 +1000
++++ Python-3.2.3-mod/Modules/_ssl.c	2012-07-24 12:18:30.753151056 +1000
+@@ -127,6 +127,7 @@
+ typedef struct {
+     PyObject_HEAD
+     SSL_CTX *ctx;
++    PyObject *msg_callback;
+ } PySSLContext;
+ 
+ typedef struct {
+@@ -1484,6 +1485,7 @@
+         return NULL;
+     }
+     self->ctx = ctx;
++    self->msg_callback = NULL;
+     /* Defaults */
+     SSL_CTX_set_verify(self->ctx, SSL_VERIFY_NONE, NULL);
+     SSL_CTX_set_options(self->ctx,
+@@ -1497,6 +1499,54 @@
+     return (PyObject *)self;
+ }
+ 
++void
++_msg_callback(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl, void *arg)
++{
++  PyObject *arglist, *result;
++
++#ifdef WITH_THREAD
++    PyGILState_STATE threadstate;
++#endif
++
++  arglist = Py_BuildValue("(y#)", (char *)buf, len);
++  if(arglist == NULL)
++    printf("Error, arglist == NULL\n");
++
++#ifdef WITH_THREAD
++    threadstate = PyGILState_Ensure();
++#endif
++
++  result = PyObject_CallObject(((PySSLContext *)arg)->msg_callback, arglist);
++  Py_DECREF(arglist);
++  if (result == NULL)
++    PyErr_Print();
++  Py_DECREF(result);
++
++#ifdef WITH_THREAD
++    PyGILState_Release(threadstate);
++#endif
++}
++
++static PyObject *
++set_msg_callback(PySSLContext *self, PyObject *args)
++{
++  PyObject *temp;
++  
++  if (PyArg_ParseTuple(args, "O", &temp)) {
++    if(!PyCallable_Check(temp)){
++      PyErr_SetString(PyExc_TypeError, "parameter must be callable");
++      return NULL;
++    }
++    Py_XINCREF(temp);
++    if (self->msg_callback)
++      Py_XDECREF(self->msg_callback);
++    self->msg_callback = temp;
++    SSL_CTX_set_msg_callback(self->ctx, _msg_callback);
++    SSL_CTX_set_msg_callback_arg(self->ctx, self);
++  }
++  Py_RETURN_NONE;
++}
++
+ static void
+ context_dealloc(PySSLContext *self)
+ {
+@@ -1817,6 +1867,8 @@
+                        METH_VARARGS | METH_KEYWORDS, NULL},
+     {"set_ciphers", (PyCFunction) set_ciphers,
+                     METH_VARARGS, NULL},
++    {"set_msg_callback", (PyCFunction) set_msg_callback,
++                    METH_VARARGS, NULL},
+     {"load_cert_chain", (PyCFunction) load_cert_chain,
+                         METH_VARARGS | METH_KEYWORDS, NULL},
+     {"load_verify_locations", (PyCFunction) load_verify_locations,
